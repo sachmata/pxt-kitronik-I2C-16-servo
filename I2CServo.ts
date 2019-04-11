@@ -3,155 +3,120 @@
  */
 //% weight=100 color=#00A654 icon="\uf085" block="I2C 16-Servo"
 namespace kitronik_i2c_16_servo {
+  const CHIP_ADDRESS = 0x6a; // default Kitronik Chip address
 
-//Some useful parameters. 
-    let ChipAddress = 0x6A //default Kitronik Chip address
-    let PrescaleReg = 0xFE //the prescale register address
-    let Mode1Reg = 0x00  //The mode 1 register address
-    
-// If you wanted to write some code that stepped through the servos then this is the BASe and size to do that 	
-	let Servo1RegBase = 0x08 
-    let ServoRegDistance = 4
-	//To get the PWM pulses to the correct size and zero offset these are the default numbers. 
-    let ServoMultiplier = 226
-    let ServoZeroOffset = 0x66
+  const ALL_LED_ON_L_REG = 0xfa;
+  const ALL_LED_ON_H_REG = 0xfb;
+  const ALL_LED_OFF_L_REG = 0xfc;
+  const ALL_LED_OFF_H_REG = 0xfd;
+  const PRE_SCALE_REG = 0xfe;
 
-    let initalised = false //a flag to allow us to initialise without explicitly calling the secret incantation
+  const MODE1_REG = 0x00; // the mode 1 register address
 
-    //nice big list of servos for the block to use. These represent register offsets in the PCA9865
-    export enum Servos {
-        Servo1 = 0x08,
-        Servo2 = 0x0C,
-        Servo3 = 0x10,
-        Servo4 = 0x14,
-        Servo5 = 0x18,
-        Servo6 = 0x1C,
-        Servo7 = 0x20,
-        Servo8 = 0x24,
-        Servo9 = 0x28,
-        Servo10 = 0x2C,
-        Servo11 = 0x30,
-        Servo12 = 0x34,
-        Servo13 = 0x38,
-        Servo14 = 0x3C,
-        Servo15 = 0x40,
-        Servo16 = 0x44,
+  // To get the PWM pulses to the correct size and zero offset these are the default numbers.
+  // 50 Hz - 133(0x85) - 27.24 MHz ?
+  // datasheet says internal oscilator is 25 MHz
+  const UPDATE_FREQ = 50; // 50 Hz
+  const UPDATE_TIME = 1e6 / UPDATE_FREQ; // 200000 us
+  const CHIP_CLOCK = 25e6; // 25 MHz
+  const CHIP_COUNTER = 4096; // 2^12
+  const PRE_SCALE = Math.floor(CHIP_CLOCK / (CHIP_COUNTER * UPDATE_FREQ) - 1); // 0x79
+
+  const SERVO_ANGLE_RANGE = 180; // degrees
+  const SERVO_PULSE_MIN = 700; // us
+  const SERVO_PULSE_MAX = 2300; // us
+
+  const UINT8LE = NumberFormat.UInt8LE;
+
+  let initalised = false;
+
+  const SERVO_REG_BASE = 0x08;
+  const SERVO_REG_OFFSET = 4;
+
+  // nice big list of servos for the block to use. These represent register offsets in the PCA9865
+  export enum Servos {
+    Servo1 = SERVO_REG_BASE + 0 * SERVO_REG_OFFSET,
+    Servo2 = SERVO_REG_BASE + 1 * SERVO_REG_OFFSET,
+    Servo3 = SERVO_REG_BASE + 2 * SERVO_REG_OFFSET,
+    Servo4 = SERVO_REG_BASE + 3 * SERVO_REG_OFFSET,
+    Servo5 = SERVO_REG_BASE + 4 * SERVO_REG_OFFSET,
+    Servo6 = SERVO_REG_BASE + 5 * SERVO_REG_OFFSET,
+    Servo7 = SERVO_REG_BASE + 6 * SERVO_REG_OFFSET,
+    Servo8 = SERVO_REG_BASE + 7 * SERVO_REG_OFFSET,
+    Servo9 = SERVO_REG_BASE + 8 * SERVO_REG_OFFSET,
+    Servo10 = SERVO_REG_BASE + 9 * SERVO_REG_OFFSET,
+    Servo11 = SERVO_REG_BASE + 10 * SERVO_REG_OFFSET,
+    Servo12 = SERVO_REG_BASE + 11 * SERVO_REG_OFFSET,
+    Servo13 = SERVO_REG_BASE + 12 * SERVO_REG_OFFSET,
+    Servo14 = SERVO_REG_BASE + 13 * SERVO_REG_OFFSET,
+    Servo15 = SERVO_REG_BASE + 14 * SERVO_REG_OFFSET,
+    Servo16 = SERVO_REG_BASE + 15 * SERVO_REG_OFFSET
+  }
+
+  function servoAngleToOffCount(angle: number): [number, number] {
+    const offCount = pins.map(
+      pins.map(angle, 0, SERVO_ANGLE_RANGE, SERVO_PULSE_MIN, SERVO_PULSE_MAX),
+      0,
+      UPDATE_TIME,
+      0,
+      CHIP_COUNTER
+    );
+
+    return [offCount & 0x00ff, (offCount & 0xff00) >> 8];
+  }
+
+  function initalise(): void {
+    // should probably do a soft reset of the I2C chip here when I figure out how
+
+    // set the prescale to 50 hz
+    pins.i2cWriteNumber(CHIP_ADDRESS, PRE_SCALE_REG, UINT8LE, true);
+    pins.i2cWriteNumber(CHIP_ADDRESS, PRE_SCALE, UINT8LE, false);
+
+    // set all on to 0
+    pins.i2cWriteNumber(CHIP_ADDRESS, ALL_LED_ON_L_REG, UINT8LE, true);
+    pins.i2cWriteNumber(CHIP_ADDRESS, 0x00, UINT8LE, false);
+
+    pins.i2cWriteNumber(CHIP_ADDRESS, ALL_LED_ON_H_REG, UINT8LE, true);
+    pins.i2cWriteNumber(CHIP_ADDRESS, 0x00, UINT8LE, false);
+
+    // set all off to equivalent of 90 deg
+    const [centreLow, centreHigh] = servoAngleToOffCount(SERVO_ANGLE_RANGE / 2);
+
+    pins.i2cWriteNumber(CHIP_ADDRESS, ALL_LED_OFF_L_REG, UINT8LE, true);
+    pins.i2cWriteNumber(CHIP_ADDRESS, centreLow, UINT8LE, false);
+
+    pins.i2cWriteNumber(CHIP_ADDRESS, ALL_LED_OFF_H_REG, UINT8LE, true);
+    pins.i2cWriteNumber(CHIP_ADDRESS, centreHigh, UINT8LE, false);
+
+    // set mode 1 register to come out of sleep
+    pins.i2cWriteNumber(CHIP_ADDRESS, MODE1_REG, UINT8LE, true);
+    pins.i2cWriteNumber(CHIP_ADDRESS, 0x01, UINT8LE, false);
+
+    //set the initalised flag so we dont come in here again automatically
+    initalised = true;
+  }
+
+  /**
+   * sets the requested servo to the reguested angle.
+   * if the PCA has not yet been initialised calls the initialisation routine
+   *
+   * @param servo Which servo to set
+   * @param angle the angle to set the servo to
+   */
+  //% blockId=kitronik_I2Cservo_write
+  //% block="set%Servo|to%degrees"
+  //% degrees.min=0 degrees.max=180
+  export function servoWrite(servo: Servos, angle: number): void {
+    if (!initalised) {
+      initalise();
     }
 
-	export enum BoardAddresses{
-		Board1 = 0x6A,
-		
-	}
-    //Trim the servo pulses. These are here for advanced users, and not exposed to blocks.
-    //It appears that servos I've tested are actually expecting 0.5 - 2.5mS pulses, 
-    //not the widely reported 1-2mS 
-    //that equates to multiplier of 226, and offset of 0x66
-    // a better trim function that does the maths for the end user could be exposed, the basics are here 
-	// for reference
+    const [offLow, offHigh] = servoAngleToOffCount(angle);
 
-    export function TrimServoMultiplier(Value: number) {
-        if (Value < 113) {
-            ServoMultiplier = 113
-        }
-        else {
-            if (Value > 226) {
-                ServoMultiplier = 226
-            }
-            else {
-                ServoMultiplier = Value
-            }
+    pins.i2cWriteNumber(CHIP_ADDRESS, servo, UINT8LE, true);
+    pins.i2cWriteNumber(CHIP_ADDRESS, offLow, UINT8LE, false);
 
-        }
-    }
-    export function TrimServoZeroOffset(Value: number) {
-        if (Value < 0x66) {
-            ServoZeroOffset = 0x66
-        }
-        else {
-            if (Value > 0xCC) {
-                ServoZeroOffset = 0xCC
-            }
-            else {
-                ServoZeroOffset = Value
-            }
-
-        }
-    }
-
-	/*
-		This secret incantation sets up the PCA9865 I2C driver chip to be running at 50Hx pulse repetition, and then sets the 16 output registers to 1.5mS - centre travel.
-		It should not need to be called directly be a user - the first servo write will call it.
-	
-	*/
-	function secretIncantation(): void {
-        let buf = pins.createBuffer(2)
-
-        //Should probably do a soft reset of the I2C chip here when I figure out how
-
-        // First set the prescaler to 50 hz
-        buf[0] = PrescaleReg
-        buf[1] = 0x85
-        pins.i2cWriteBuffer(ChipAddress, buf, false)
-        //Block write via the all leds register to set all of them to 90 degrees
-        buf[0] = 0xFA
-        buf[1] = 0x00
-        pins.i2cWriteBuffer(ChipAddress, buf, false)
-        buf[0] = 0xFB
-        buf[1] = 0x00
-        pins.i2cWriteBuffer(ChipAddress, buf, false)
-        buf[0] = 0xFC
-        buf[1] = 0x66
-        pins.i2cWriteBuffer(ChipAddress, buf, false)
-        buf[0] = 0xFD
-        buf[1] = 0x00
-        pins.i2cWriteBuffer(ChipAddress, buf, false)
-        //Set the mode 1 register to come out of sleep
-        buf[0] = Mode1Reg
-        buf[1] = 0x01
-        pins.i2cWriteBuffer(ChipAddress, buf, false)
-        //set the initalised flag so we dont come in here again automatically
-        initalised = true
-    }
-	
-	
-/**
-     * sets the requested servo to the reguested angle.
-	 * if the PCA has not yet been initialised calls the initialisation routine
-	 *
-     * @param Servo Which servo to set
-	 * @param degrees the angle to set the servo to
-     */
-    //% blockId=kitronik_I2Cservo_write
-    //% block="set%Servo|to%degrees"
-	//% degrees.min=0 degrees.max=180
-	
-    export function servoWrite(Servo: Servos, degrees: number): void {
-        if (initalised == false) {
-            secretIncantation()
-        }
-        let buf = pins.createBuffer(2)
-        let HighByte = false
-        let deg100 = degrees * 100
-        let PWMVal100 = deg100 * ServoMultiplier
-        let PWMVal = PWMVal100 / 10000
-        PWMVal = Math.floor(PWMVal)
-        PWMVal = PWMVal + ServoZeroOffset
-        if (PWMVal > 0xFF) {
-            HighByte = true
-        }
-        buf[0] = Servo
-        buf[1] = PWMVal
-        pins.i2cWriteBuffer(ChipAddress, buf, false)
-        if (HighByte) {
-            buf[0] = Servo + 1
-            buf[1] = 0x01
-        }
-        else {
-            buf[0] = Servo + 1
-            buf[1] = 0x00
-        }
-        pins.i2cWriteBuffer(ChipAddress, buf, false)
-    }
-	    
-
+    pins.i2cWriteNumber(CHIP_ADDRESS, servo + 1, UINT8LE, true);
+    pins.i2cWriteNumber(CHIP_ADDRESS, offHigh, UINT8LE, false);
+  }
 }
