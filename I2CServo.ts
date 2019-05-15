@@ -26,8 +26,6 @@ namespace kitronik_i2c_16_servo {
   const SERVO_PULSE_MIN = 700; // us
   const SERVO_PULSE_MAX = 2300; // us
 
-  const UINT8LE = NumberFormat.UInt8LE;
-
   let initalised = false;
 
   const SERVO_REG_BASE = 0x08;
@@ -67,8 +65,10 @@ namespace kitronik_i2c_16_servo {
   }
 
   function i2cWrite(register: number, value: number) {
-    pins.i2cWriteNumber(CHIP_ADDRESS, register, UINT8LE, true);
-    pins.i2cWriteNumber(CHIP_ADDRESS, value, UINT8LE, false);
+    const buf = pins.createBuffer(2);
+    buf[0] = register;
+    buf[1] = value;
+    pins.i2cWriteBuffer(CHIP_ADDRESS, buf, false);
   }
 
   function initalise(): void {
