@@ -14,13 +14,11 @@ namespace kitronik_i2c_16_servo {
   const MODE1_REG = 0x00; // the mode 1 register address
 
   // To get the PWM pulses to the correct size and zero offset these are the default numbers.
-  // 50 Hz - 133(0x85) - 27.24 MHz ?
-  // datasheet says internal oscilator is 25 MHz
   const UPDATE_FREQ = 50; // 50 Hz
-  const UPDATE_TIME = 1e6 / UPDATE_FREQ; // 200000 us
-  const CHIP_CLOCK = 25e6; // 25 MHz
+  const UPDATE_TIME = 1e6 / UPDATE_FREQ; // 100000 us
+  const CHIP_CLOCK = 25e6 * 1.09; // 25 MHz corrected by 9%
   const CHIP_COUNTER = 4096; // 2^12
-  const PRE_SCALE = Math.floor(CHIP_CLOCK / (CHIP_COUNTER * UPDATE_FREQ) - 1); // 0x79
+  const PRE_SCALE = Math.round(CHIP_CLOCK / (CHIP_COUNTER * UPDATE_FREQ)) - 1;
 
   const SERVO_ANGLE_RANGE = 180; // degrees
   const SERVO_PULSE_MIN = 700; // us
@@ -51,7 +49,7 @@ namespace kitronik_i2c_16_servo {
     Servo16 = SERVO_REG_BASE + 15 * SERVO_REG_OFFSET
   }
 
-  function servoAngleToOffCount(angle: number): [number, number] {
+  function servoAngleToOffCount(angle: number): { low: number; high: number } {
     const servoPulse = pins.map(
       angle,
       0,
@@ -61,33 +59,40 @@ namespace kitronik_i2c_16_servo {
     );
     const offCount = pins.map(servoPulse, 0, UPDATE_TIME, 0, CHIP_COUNTER);
 
-    return [offCount & 0x00ff, (offCount & 0xff00) >> 8];
+    return { low: offCount & 0x00ff, high: (offCount & 0xff00) >> 8 };
   }
 
   function i2cWrite(register: number, value: number) {
     const buf = pins.createBuffer(2);
-    buf[0] = register;
-    buf[1] = value;
+    buf.setNumber(NumberFormat.UInt8LE, 0, register);
+    buf.setNumber(NumberFormat.UInt8LE, 1, value);
     pins.i2cWriteBuffer(CHIP_ADDRESS, buf, false);
   }
 
   function initalise(): void {
-    // should probably do a soft reset of the I2C chip here when I figure out how
+    // reset
+    i2cWrite(MODE1_REG, 0x80);
+    basic.pause(10);
 
-    // set the prescale to 50 hz
+    // sleep
+    i2cWrite(MODE1_REG, 0x11);
+
+    // set the prescale
     i2cWrite(PRE_SCALE_REG, PRE_SCALE);
+    basic.pause(10);
 
-    // set all on to 0
+    // set all ON to 0
     i2cWrite(ALL_LED_ON_L_REG, 0x00);
     i2cWrite(ALL_LED_ON_H_REG, 0x00);
 
-    // set all off to equivalent of 90 deg
-    const [centreLow, centreHigh] = servoAngleToOffCount(SERVO_ANGLE_RANGE / 2);
-    i2cWrite(ALL_LED_OFF_L_REG, centreLow);
-    i2cWrite(ALL_LED_OFF_H_REG, centreHigh);
+    // set all OFF to equivalent of 90 deg
+    const centre = servoAngleToOffCount(SERVO_ANGLE_RANGE / 2);
+    i2cWrite(ALL_LED_OFF_L_REG, centre.low);
+    i2cWrite(ALL_LED_OFF_H_REG, centre.high);
 
     // set mode 1 register to come out of sleep
     i2cWrite(MODE1_REG, 0x01);
+    basic.pause(10);
 
     //set the initalised flag so we dont come in here again automatically
     initalised = true;
@@ -108,8 +113,9 @@ namespace kitronik_i2c_16_servo {
       initalise();
     }
 
-    const [offLow, offHigh] = servoAngleToOffCount(angle);
-    i2cWrite(servo, offLow);
-    i2cWrite(servo + 1, offHigh);
+    const off = servoAngleToOffCount(angle);
+    i2cWrite(servo, off.low);
+    i2cWrite(servo + 1, off.high);
+    basic.pause(10);
   }
 }
